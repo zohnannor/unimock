@@ -359,12 +359,14 @@
 
 /// Types used for building and defining mock behaviour.
 pub mod build;
+pub mod core;
 /// APIs used by macros, not intended to be used directly.
 pub mod macro_api;
 /// Function outputs.
 pub mod output;
 /// Traits and types used for describing the properties of various mock types.
 pub mod property;
+
 #[doc(hidden)]
 pub mod value_chain;
 

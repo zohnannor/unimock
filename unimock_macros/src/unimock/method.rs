@@ -6,6 +6,7 @@ use super::output;
 use super::Attr;
 
 use crate::doc;
+use crate::doc::SynDoc;
 
 pub struct MockMethod<'t> {
     pub method: &'t syn::TraitItemMethod,
@@ -17,6 +18,10 @@ pub struct MockMethod<'t> {
 }
 
 impl<'s> MockMethod<'s> {
+    pub fn span(&self) -> proc_macro2::Span {
+        self.method.sig.span()
+    }
+
     pub fn mock_fn_path(&self, attr: &Attr) -> proc_macro2::TokenStream {
         let mock_fn_ident = &self.mock_fn_ident;
 
@@ -89,13 +94,14 @@ impl<'s> MockMethod<'s> {
             })
     }
 
-    pub fn mockfn_doc_attrs(&self, trait_ident: &syn::Ident) -> Vec<proc_macro2::TokenStream> {
+    pub fn mockfn_doc_attrs(&self, trait_path: &syn::Path) -> Vec<proc_macro2::TokenStream> {
         let sig_string = doc::signature_documentation(&self.method.sig, doc::SkipReceiver(true));
+        let trait_path_string = trait_path.doc_string();
 
         let doc_string = if self.non_generic_mock_entry_ident.is_some() {
-            format!("Generic mock interface for `{trait_ident}::{sig_string}`. Get a MockFn instance by calling `with_types()`.")
+            format!("Generic mock interface for `{trait_path_string}::{sig_string}`. Get a MockFn instance by calling `with_types()`.")
         } else {
-            format!("MockFn for `{trait_ident}::{sig_string}`.")
+            format!("MockFn for `{trait_path_string}::{sig_string}`.")
         };
 
         let doc_lit = syn::LitStr::new(&doc_string, proc_macro2::Span::call_site());

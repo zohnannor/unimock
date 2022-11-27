@@ -39,12 +39,8 @@ impl<'t> Generics<'t> {
     }
 
     fn args_iterator(&self) -> impl Iterator<Item = proc_macro2::TokenStream> + '_ {
-        self.trait_info
-            .item
-            .generics
-            .params
-            .iter()
-            .map(|generic_param| match generic_param {
+        self.trait_info.input_trait.generics.params.iter().map(
+            |generic_param| match generic_param {
                 syn::GenericParam::Lifetime(lifetime) => {
                     quote! { #lifetime }
                 }
@@ -56,7 +52,8 @@ impl<'t> Generics<'t> {
                     let ident = &const_param.ident;
                     quote! { #ident }
                 }
-            })
+            },
+        )
     }
 }
 
