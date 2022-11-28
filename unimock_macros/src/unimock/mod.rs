@@ -1,4 +1,4 @@
-use quote::{quote, quote_spanned};
+use quote::{quote, quote_spanned, ToTokens};
 
 mod associated_future;
 mod attr;
@@ -12,6 +12,8 @@ pub use attr::{Attr, MockApi};
 use trait_info::TraitInfo;
 
 use attr::{UnmockFn, UnmockFnParams};
+
+use self::method::MockMethod;
 
 pub fn generate(attr: Attr, item_trait: syn::ItemTrait) -> syn::Result<proc_macro2::TokenStream> {
     let trait_info = trait_info::TraitInfo::analyze(&attr.prefix, &item_trait, &attr)?;
@@ -140,21 +142,7 @@ fn def_mock_fn(
 
     let input_lifetime = &attr.input_lifetime;
 
-    let inputs_tuple = method
-        .method
-        .sig
-        .inputs
-        .iter()
-        .enumerate()
-        .filter_map(|(index, input)| match input {
-            syn::FnArg::Receiver(_) => None,
-            syn::FnArg::Typed(pat_type) => match (index, pat_type.pat.as_ref()) {
-                (0, syn::Pat::Ident(pat_ident)) if pat_ident.ident == "self" => None,
-                _ => Some(pat_type.ty.as_ref()),
-            },
-        })
-        .map(|ty| util::substitute_lifetimes(ty, input_lifetime))
-        .collect::<Vec<_>>();
+    let inputs_tuple = InputsTuple::new(method, attr);
 
     let generic_params = util::Generics::params(trait_info);
     let generic_args = util::Generics::args(trait_info);
@@ -182,7 +170,7 @@ fn def_mock_fn(
     let impl_blocks = quote_spanned! { span=>
         #(#mirrored_attrs)*
         impl #generic_params #prefix::MockFn for #mock_fn_path #generic_args #where_clause {
-            type Inputs<#input_lifetime> = (#(#inputs_tuple),*);
+            type Inputs<#input_lifetime> = #inputs_tuple;
             type Response = #response_associated_type;
             type Output<'u> = #output_associated_type;
             const NAME: &'static str = #mock_fn_name;
@@ -204,12 +192,12 @@ fn def_mock_fn(
 
         MockFnDef {
             mock_fn_struct_item: gen_mock_fn_struct_item(non_generic_ident),
-            impl_details: quote_spanned! { span=>
+            impl_details: quote! {
                 impl #module_scope #non_generic_ident {
                     pub fn with_types #generic_params(
                         self
                     ) -> impl for<#input_lifetime> #prefix::MockFn<
-                        Inputs<#input_lifetime> = (#(#inputs_tuple),*),
+                        Inputs<#input_lifetime> = #inputs_tuple,
                         Response = #response_associated_type,
                     >
                         #where_clause
@@ -251,7 +239,8 @@ fn def_method_impl(
     let mirrored_attrs = method.mirrored_attrs();
     let mock_fn_path = method.mock_fn_path(attr);
 
-    let inputs_destructuring = method.inputs_destructuring();
+    let inputs_tupling = method.inputs_tupling();
+
     let generic_args = util::Generics::args(trait_info);
 
     let has_impl_trait_future = matches!(
@@ -264,6 +253,7 @@ fn def_method_impl(
         params: unmock_params,
     }) = attr.get_unmock_fn(index)
     {
+        let inputs_destructuring = method.inputs_destructuring();
         let opt_dot_await = if method_sig.asyncness.is_some() || has_impl_trait_future {
             Some(util::DotAwait)
         } else {
@@ -280,14 +270,14 @@ fn def_method_impl(
         };
 
         quote_spanned! { span=>
-            match #prefix::macro_api::eval::<#mock_fn_path #generic_args>(&self, (#inputs_destructuring)) {
+            match #prefix::macro_api::eval::<#mock_fn_path #generic_args>(&self, #inputs_tupling) {
                 #prefix::macro_api::Evaluation::Evaluated(output) => output,
-                #prefix::macro_api::Evaluation::Skipped((#inputs_destructuring)) => #unmock_expr
+                #prefix::macro_api::Evaluation::Skipped(#inputs_tupling) => #unmock_expr
             }
         }
     } else {
         quote_spanned! { span=>
-            #prefix::macro_api::eval::<#mock_fn_path #generic_args>(&self, (#inputs_destructuring)).unwrap(&self)
+            #prefix::macro_api::eval::<#mock_fn_path #generic_args>(&self, #inputs_tupling).unwrap(&self)
         }
     };
 
@@ -315,4 +305,41 @@ fn prefix_with_span(prefix: &syn::Path, span: proc_macro2::Span) -> syn::Path {
     }
 
     prefix
+}
+
+struct InputsTuple(Vec<syn::Type>);
+
+impl InputsTuple {
+    fn new(mock_method: &MockMethod, attr: &Attr) -> Self {
+        Self(
+            mock_method
+                .method
+                .sig
+                .inputs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, input)| match input {
+                    syn::FnArg::Receiver(_) => None,
+                    syn::FnArg::Typed(pat_type) => match (index, pat_type.pat.as_ref()) {
+                        (0, syn::Pat::Ident(pat_ident)) if pat_ident.ident == "self" => None,
+                        _ => Some(pat_type.ty.as_ref()),
+                    },
+                })
+                .map(|ty| util::substitute_lifetimes(ty, &attr.input_lifetime))
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+impl ToTokens for InputsTuple {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        if self.0.len() == 1 {
+            tokens.extend(self.0.first().to_token_stream());
+        } else {
+            let types = &self.0;
+            tokens.extend(quote! {
+                (#(#types),*)
+            });
+        }
+    }
 }

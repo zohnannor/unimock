@@ -43,6 +43,11 @@ impl<'s> MockMethod<'s> {
         InputsDestructuring { method: self }
     }
 
+    pub fn inputs_tupling(&self) -> proc_macro2::TokenStream {
+        let inputs_tupling = InputsTupling { method: self };
+        quote! { #inputs_tupling }
+    }
+
     pub fn generate_debug_inputs_fn(&self, attr: &Attr) -> proc_macro2::TokenStream {
         let prefix = &attr.prefix;
         let first_param = self
@@ -64,10 +69,10 @@ impl<'s> MockMethod<'s> {
             }
         };
 
-        let inputs_destructuring = self.inputs_destructuring();
+        let inputs_tupling = self.inputs_tupling();
 
         quote! {
-            fn debug_inputs((#inputs_destructuring): &Self::Inputs<'_>) -> String {
+            fn debug_inputs(#inputs_tupling: &Self::Inputs<'_>) -> String {
                 #body
             }
         }
@@ -266,8 +271,8 @@ impl<'t> quote::ToTokens for InputsDestructuring<'t> {
         }
 
         let last_index = self.method.method.sig.inputs.len() - 1;
-        for (index, pair) in self.method.method.sig.inputs.pairs().enumerate() {
-            if let syn::FnArg::Typed(pat_type) = pair.value() {
+        for (index, arg) in self.method.method.sig.inputs.iter().enumerate() {
+            if let syn::FnArg::Typed(pat_type) = arg {
                 match (index, pat_type.pat.as_ref()) {
                     (0, syn::Pat::Ident(pat_ident)) if pat_ident.ident == "self" => {}
                     (_, syn::Pat::Ident(pat_ident)) => {
@@ -283,6 +288,41 @@ impl<'t> quote::ToTokens for InputsDestructuring<'t> {
                     syn::token::Comma::default().to_tokens(tokens);
                 }
             }
+        }
+    }
+}
+
+pub struct InputsTupling<'t> {
+    method: &'t MockMethod<'t>,
+}
+
+impl<'t> quote::ToTokens for InputsTupling<'t> {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let arg_count = self
+            .method
+            .method
+            .sig
+            .inputs
+            .iter()
+            .enumerate()
+            .filter(|(index, arg)| match arg {
+                syn::FnArg::Receiver(_) => false,
+                syn::FnArg::Typed(pat_type) => match (index, pat_type.pat.as_ref()) {
+                    (0, syn::Pat::Ident(pat_ident)) if pat_ident.ident == "self" => false,
+                    _ => true,
+                },
+            })
+            .count();
+        let inputs_destructuring = InputsDestructuring {
+            method: self.method,
+        };
+
+        if arg_count == 1 {
+            tokens.extend(inputs_destructuring.to_token_stream());
+        } else {
+            tokens.extend(quote! {
+                (#inputs_destructuring)
+            });
         }
     }
 }
