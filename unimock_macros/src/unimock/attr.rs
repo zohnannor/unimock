@@ -6,6 +6,7 @@ pub struct Attr {
     pub prefix: syn::Path,
     /// Module to put the MockFn in
     pub mock_api: MockApi,
+    pub trait_proxy: Option<TraitProxy>,
     unmocks: Option<WithSpan<Vec<Unmock>>>,
     pub input_lifetime: syn::Lifetime,
     pub debug: bool,
@@ -45,6 +46,7 @@ impl syn::parse::Parse for Attr {
         let mut mock_api = MockApi::Hidden;
         let mut unmocks = None;
         let mut debug = false;
+        let mut trait_proxy = None;
 
         while !input.is_empty() {
             let keyword: syn::Ident = input.parse()?;
@@ -71,6 +73,9 @@ impl syn::parse::Parse for Attr {
                 "prefix" => {
                     prefix = Some(input.parse()?);
                 }
+                "proxy" => {
+                    trait_proxy = Some(input.parse()?);
+                }
                 "unmock_with" => {
                     let content;
                     let _ = syn::bracketed!(content in input);
@@ -86,7 +91,7 @@ impl syn::parse::Parse for Attr {
                     debug = input.parse::<syn::LitBool>()?.value;
                 }
                 _ => return Err(syn::Error::new(keyword.span(), "Unrecognized keyword")),
-            };
+            }
 
             if input.peek(syn::token::Comma) {
                 let _: syn::token::Comma = input.parse()?;
@@ -98,6 +103,7 @@ impl syn::parse::Parse for Attr {
         Ok(Self {
             prefix: prefix.unwrap_or_else(|| syn::parse_quote! { ::unimock }),
             mock_api,
+            trait_proxy,
             unmocks,
             input_lifetime: syn::Lifetime::new("'__i", proc_macro2::Span::call_site()),
             debug,
@@ -113,6 +119,23 @@ pub enum MockApi {
     MockMod(syn::Ident),
     // One top-level struct per method
     Flattened(FlattenedMethods),
+}
+
+pub struct TraitProxy {
+    pub trait_path: syn::Path,
+    pub type_path: syn::Path,
+}
+
+impl syn::parse::Parse for TraitProxy {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let trait_path = input.parse()?;
+        let _ = input.parse::<syn::token::For>()?;
+        let type_path = input.parse()?;
+        Ok(Self {
+            trait_path,
+            type_path,
+        })
+    }
 }
 
 pub struct FlattenedMethods {

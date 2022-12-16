@@ -8,6 +8,7 @@ mod mock_order;
 mod prefix;
 #[cfg(feature = "pretty-print")]
 mod pretty_mismatches;
+mod proxy;
 mod unmock;
 
 fn main() {}

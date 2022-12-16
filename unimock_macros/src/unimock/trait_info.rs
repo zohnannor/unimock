@@ -1,9 +1,12 @@
+use syn::parse_quote;
+
 use super::attr::Attr;
 use super::method;
 use super::output::OutputWrapping;
 
 pub struct TraitInfo<'t> {
     pub item: &'t syn::ItemTrait,
+    pub trait_path: syn::Path,
     pub generic_params_with_bounds: syn::punctuated::Punctuated<syn::TypeParam, syn::token::Comma>,
     pub methods: Vec<Option<method::MockMethod<'t>>>,
     pub is_type_generic: bool,
@@ -57,16 +60,25 @@ impl<'t> TraitInfo<'t> {
             }
         }
 
+        let trait_path = match &attr.trait_proxy {
+            Some(proxy) => proxy.trait_path.clone(),
+            None => {
+                let ident = &item_trait.ident;
+                parse_quote! { #ident }
+            }
+        };
+
         Ok(Self {
             item: item_trait,
+            trait_path,
             generic_params_with_bounds,
             methods,
             is_type_generic,
         })
     }
 
-    pub fn ident(&self) -> &syn::Ident {
-        &self.item.ident
+    pub fn trait_path(&self) -> &syn::Path {
+        &self.trait_path
     }
 
     pub fn generic_type_params(&self) -> impl Iterator<Item = &syn::TypeParam> {

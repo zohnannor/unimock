@@ -12,12 +12,14 @@ use trait_info::TraitInfo;
 
 use attr::{UnmockFn, UnmockFnParams};
 
+use self::attr::TraitProxy;
+
 pub fn generate(attr: Attr, item_trait: syn::ItemTrait) -> syn::Result<proc_macro2::TokenStream> {
     let trait_info = trait_info::TraitInfo::analyze(&attr.prefix, &item_trait, &attr)?;
     attr.validate(&trait_info)?;
 
     let prefix = &attr.prefix;
-    let trait_ident = &trait_info.item.ident;
+    let trait_ident = &trait_info.trait_path();
     let impl_attributes = trait_info
         .item
         .attrs
@@ -60,6 +62,15 @@ pub fn generate(attr: Attr, item_trait: syn::ItemTrait) -> syn::Result<proc_macr
     let generic_params = util::Generics::params(&trait_info);
     let generic_args = util::Generics::args(&trait_info);
 
+    let implementor = match &attr.trait_proxy {
+        Some(TraitProxy { type_path, .. }) => quote! { #type_path },
+        None => quote! { #prefix::Unimock },
+    };
+    let echo_trait = match &attr.trait_proxy {
+        Some(_) => None,
+        None => Some(&item_trait),
+    };
+
     let (opt_mock_interface_public, opt_mock_interface_private) = match &attr.mock_api {
         MockApi::Hidden => (
             None,
@@ -92,7 +103,7 @@ pub fn generate(attr: Attr, item_trait: syn::ItemTrait) -> syn::Result<proc_macr
     };
 
     Ok(quote! {
-        #item_trait
+        #echo_trait
         #opt_mock_interface_public
 
         // private part:
@@ -101,7 +112,7 @@ pub fn generate(attr: Attr, item_trait: syn::ItemTrait) -> syn::Result<proc_macr
             #(#mock_fn_impl_details)*
 
             #(#impl_attributes)*
-            impl #generic_params #trait_ident #generic_args for #prefix::Unimock #where_clause {
+            impl #generic_params #trait_ident #generic_args for #implementor #where_clause {
                 #(#associated_futures)*
                 #(#method_impls)*
             }
@@ -157,7 +168,7 @@ fn def_mock_fn(
     let doc_attrs = if matches!(attr.mock_api, attr::MockApi::Hidden) {
         vec![]
     } else {
-        method.mockfn_doc_attrs(trait_info.ident())
+        method.mockfn_doc_attrs(trait_info.trait_path())
     };
 
     let response_associated_type = method.output_structure.response_associated_type(prefix);
@@ -250,6 +261,11 @@ fn def_method_impl(
         output::OutputWrapping::ImplTraitFuture(_)
     );
 
+    let self_unimock = match &attr.trait_proxy {
+        Some(_) => quote! { &self.0 },
+        None => quote! { &self },
+    };
+
     let body = if let Some(UnmockFn {
         path: unmock_path,
         params: unmock_params,
@@ -271,14 +287,14 @@ fn def_method_impl(
         };
 
         quote! {
-            match #prefix::macro_api::eval::<#mock_fn_path #generic_args>(&self, (#inputs_destructuring)) {
+            match #prefix::macro_api::eval::<#mock_fn_path #generic_args>(#self_unimock, (#inputs_destructuring)) {
                 #prefix::macro_api::Evaluation::Evaluated(output) => output,
                 #prefix::macro_api::Evaluation::Skipped((#inputs_destructuring)) => #unmock_expr
             }
         }
     } else {
         quote! {
-            #prefix::macro_api::eval::<#mock_fn_path #generic_args>(&self, (#inputs_destructuring)).unwrap(&self)
+            #prefix::macro_api::eval::<#mock_fn_path #generic_args>(#self_unimock, (#inputs_destructuring)).unwrap(#self_unimock)
         }
     };
 
